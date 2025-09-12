@@ -15,6 +15,11 @@ import (
 	"github.com/bendiamant/leash-gateway/internal/health"
 	"github.com/bendiamant/leash-gateway/internal/logger"
 	"github.com/bendiamant/leash-gateway/internal/metrics"
+	modulelogger "github.com/bendiamant/leash-gateway/internal/modules/core/logger"
+	"github.com/bendiamant/leash-gateway/internal/modules/core/ratelimiter"
+	"github.com/bendiamant/leash-gateway/internal/modules/interface"
+	"github.com/bendiamant/leash-gateway/internal/modules/pipeline"
+	"github.com/bendiamant/leash-gateway/internal/modules/registry"
 	pb "github.com/bendiamant/leash-gateway/proto/module"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -57,11 +62,75 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Create module registry and pipeline
+	moduleRegistry := registry.NewModuleRegistry(logger)
+	modulePipeline := pipeline.NewPipeline(logger)
+
+	// Initialize core modules
+	rateLimiterModule := ratelimiter.NewRateLimiter(logger)
+	loggerModule := modulelogger.NewLogger(logger)
+
+	// Register modules
+	if err := moduleRegistry.Register(rateLimiterModule); err != nil {
+		logger.Fatalf("Failed to register rate limiter module: %v", err)
+	}
+	if err := moduleRegistry.Register(loggerModule); err != nil {
+		logger.Fatalf("Failed to register logger module: %v", err)
+	}
+
+	// Add modules to pipeline
+	if err := modulePipeline.AddModule(rateLimiterModule); err != nil {
+		logger.Fatalf("Failed to add rate limiter to pipeline: %v", err)
+	}
+	if err := modulePipeline.AddModule(loggerModule); err != nil {
+		logger.Fatalf("Failed to add logger to pipeline: %v", err)
+	}
+
+	// Initialize modules
+	moduleConfig := &interfaces.ModuleConfig{
+		Name:     "rate-limiter",
+		Type:     "policy",
+		Enabled:  true,
+		Priority: 100,
+		Config: map[string]interface{}{
+			"algorithm":     "token_bucket",
+			"default_limit": 1000,
+			"default_window": "1h",
+			"storage":       "memory",
+		},
+	}
+	if err := rateLimiterModule.Initialize(ctx, moduleConfig); err != nil {
+		logger.Fatalf("Failed to initialize rate limiter: %v", err)
+	}
+	if err := rateLimiterModule.Start(ctx); err != nil {
+		logger.Fatalf("Failed to start rate limiter: %v", err)
+	}
+
+	loggerConfig := &interfaces.ModuleConfig{
+		Name:     "logger",
+		Type:     "sink",
+		Enabled:  true,
+		Priority: 1000,
+		Config: map[string]interface{}{
+			"log_requests":  true,
+			"log_responses": false,
+			"redact_pii":    true,
+		},
+	}
+	if err := loggerModule.Initialize(ctx, loggerConfig); err != nil {
+		logger.Fatalf("Failed to initialize logger module: %v", err)
+	}
+	if err := loggerModule.Start(ctx); err != nil {
+		logger.Fatalf("Failed to start logger module: %v", err)
+	}
+
 	// Create module host server
 	moduleHost := &ModuleHostServer{
-		logger:  logger,
-		config:  cfg,
-		metrics: metricsRegistry,
+		logger:   logger,
+		config:   cfg,
+		metrics:  metricsRegistry,
+		registry: moduleRegistry,
+		pipeline: modulePipeline,
 	}
 
 	// Create gRPC server
@@ -175,9 +244,11 @@ func main() {
 // ModuleHostServer implements the ModuleHost gRPC service
 type ModuleHostServer struct {
 	pb.UnimplementedModuleHostServer
-	logger  *zap.SugaredLogger
-	config  *config.Config
-	metrics *metrics.Registry
+	logger   *zap.SugaredLogger
+	config   *config.Config
+	metrics  *metrics.Registry
+	registry *registry.ModuleRegistry
+	pipeline *pipeline.Pipeline
 }
 
 // ProcessRequest processes incoming requests through the module pipeline
@@ -187,28 +258,55 @@ func (s *ModuleHostServer) ProcessRequest(ctx context.Context, req *pb.ProcessRe
 	s.logger.Debugf("Processing request %s from tenant %s to provider %s", 
 		req.RequestId, req.TenantId, req.Provider)
 
-	// Record request metrics
-	s.metrics.RequestsTotal.WithLabelValues(
-		req.TenantId,
-		req.Provider,
-		"unknown", // model - would be extracted from request body
-		"POST",
-		"200", // status - would be determined by processing
-	).Inc()
-
-	// For now, just allow all requests through (basic implementation)
-	response := &pb.ProcessRequestResponse{
-		Action:             pb.Action_ACTION_CONTINUE,
-		ProcessingTimeMs:   time.Since(start).Milliseconds(),
-		Annotations:        make(map[string]string),
-		Metadata:          make(map[string]string),
+	// Create processing context
+	processCtx := &interfaces.ProcessRequestContext{
+		RequestID: req.RequestId,
+		Timestamp: time.Now(),
+		TenantID:  req.TenantId,
+		Provider:  req.Provider,
+		Method:    "POST", // Default for LLM requests
+		Path:      fmt.Sprintf("/v1/%s/chat/completions", req.Provider),
+		Headers:   make(map[string]string),
+		Body:      []byte{}, // Would be populated from actual request
+		Annotations: make(map[string]interface{}),
 	}
 
-	// Add processing metadata
-	response.Annotations["processed_by"] = "leash-module-host"
-	response.Annotations["processing_time_ms"] = fmt.Sprintf("%d", response.ProcessingTimeMs)
-	response.Metadata["tenant_id"] = req.TenantId
-	response.Metadata["provider"] = req.Provider
+	// Process through module pipeline
+	result, err := s.pipeline.ProcessRequest(ctx, processCtx)
+	if err != nil {
+		s.logger.Errorf("Pipeline processing failed for request %s: %v", req.RequestId, err)
+		s.metrics.RequestsTotal.WithLabelValues(
+			req.TenantId, req.Provider, "unknown", "POST", "500",
+		).Inc()
+		
+		return &pb.ProcessRequestResponse{
+			Action:           pb.Action_ACTION_BLOCK,
+			ProcessingTimeMs: time.Since(start).Milliseconds(),
+			Annotations:      map[string]string{"error": err.Error()},
+		}, nil
+	}
+
+	// Record request metrics
+	status := "200"
+	if result.Action == interfaces.ActionBlock {
+		status = "403"
+	}
+	
+	s.metrics.RequestsTotal.WithLabelValues(
+		req.TenantId, req.Provider, "unknown", "POST", status,
+	).Inc()
+
+	// Convert result to protobuf response
+	response := &pb.ProcessRequestResponse{
+		Action:           convertActionToProto(result.Action),
+		ProcessingTimeMs: result.ProcessingTime.Milliseconds(),
+		Annotations:      convertAnnotationsToStringMap(result.Annotations),
+		Metadata:         result.Metadata,
+	}
+
+	if result.Action == interfaces.ActionBlock {
+		response.Annotations["block_reason"] = result.BlockReason
+	}
 
 	s.logger.Debugf("Request %s processed in %dms, action: %s", 
 		req.RequestId, response.ProcessingTimeMs, response.Action.String())
@@ -219,14 +317,52 @@ func (s *ModuleHostServer) ProcessRequest(ctx context.Context, req *pb.ProcessRe
 
 // Health returns the health status of the module host
 func (s *ModuleHostServer) Health(ctx context.Context, req *pb.HealthRequest) (*pb.HealthResponse, error) {
+	// Check module health
+	moduleHealth := s.registry.HealthCheck(ctx)
+	allHealthy := true
+	for _, health := range moduleHealth {
+		if health.Status != interfaces.HealthStateHealthy {
+			allHealthy = false
+			break
+		}
+	}
+
+	status := pb.HealthStatus_HEALTH_STATUS_HEALTHY
+	message := "Module Host is healthy"
+	if !allHealthy {
+		status = pb.HealthStatus_HEALTH_STATUS_DEGRADED
+		message = "Some modules are unhealthy"
+	}
+
 	return &pb.HealthResponse{
-		Status:  pb.HealthStatus_HEALTH_STATUS_HEALTHY,
-		Message: "Module Host is healthy",
+		Status:  status,
+		Message: message,
 		Details: map[string]string{
-			"version":    version,
-			"build_time": buildTime,
-			"git_commit": gitCommit,
-			"uptime":     time.Since(time.Now()).String(), // This would be tracked properly in real implementation
+			"version":        version,
+			"build_time":     buildTime,
+			"git_commit":     gitCommit,
+			"modules_count":  fmt.Sprintf("%d", len(s.registry.List())),
+			"pipeline_status": fmt.Sprintf("%v", s.pipeline.GetPipelineStatus()),
 		},
 	}, nil
+}
+
+// Helper functions for type conversion
+func convertActionToProto(action interfaces.Action) pb.Action {
+	switch action {
+	case interfaces.ActionContinue:
+		return pb.Action_ACTION_CONTINUE
+	case interfaces.ActionBlock:
+		return pb.Action_ACTION_BLOCK
+	default:
+		return pb.Action_ACTION_CONTINUE
+	}
+}
+
+func convertAnnotationsToStringMap(annotations map[string]interface{}) map[string]string {
+	result := make(map[string]string)
+	for key, value := range annotations {
+		result[key] = fmt.Sprintf("%v", value)
+	}
+	return result
 }
