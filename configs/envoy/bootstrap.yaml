@@ -1,0 +1,177 @@
+admin:
+  address:
+    socket_address:
+      protocol: TCP
+      address: 0.0.0.0
+      port_value: 9901
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address:
+        protocol: TCP
+        address: 0.0.0.0
+        port_value: 8080
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains: ["*"]
+              routes:
+              # OpenAI routing
+              - match:
+                  prefix: "/v1/openai/"
+                route:
+                  cluster: openai_cluster
+                  prefix_rewrite: "/v1/"
+                  timeout: 30s
+              # Anthropic routing
+              - match:
+                  prefix: "/v1/anthropic/"
+                route:
+                  cluster: anthropic_cluster
+                  prefix_rewrite: "/v1/"
+                  timeout: 30s
+              # Health check endpoint
+              - match:
+                  prefix: "/health"
+                direct_response:
+                  status: 200
+                  body:
+                    inline_string: "OK"
+              # Metrics endpoint
+              - match:
+                  prefix: "/metrics"
+                route:
+                  cluster: module_host_cluster
+                  prefix_rewrite: "/metrics"
+          http_filters:
+          # Rate limiting
+          - name: envoy.filters.http.local_ratelimit
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+              stat_prefix: leash_gateway_rate_limit
+              token_bucket:
+                max_tokens: 1000
+                tokens_per_fill: 100
+                fill_interval: 1s
+              filter_enabled:
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+          # External processing (Module Host)
+          - name: envoy.filters.http.ext_proc
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+              grpc_service:
+                envoy_grpc:
+                  cluster_name: module_host_cluster
+                timeout: 2s
+              processing_mode:
+                request_header_mode: SEND
+                response_header_mode: SEND
+                request_body_mode: BUFFERED
+                response_body_mode: STREAMED
+              message_timeout: 2s
+              failure_mode_allow: false  # Fail closed for security
+              max_message_timeout: 10s
+          # Router (must be last)
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  # OpenAI cluster
+  - name: openai_cluster
+    connect_timeout: 5s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: openai_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: api.openai.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: api.openai.com
+    circuit_breakers:
+      thresholds:
+      - max_connections: 100
+        max_requests: 1000
+        max_retries: 3
+
+  # Anthropic cluster
+  - name: anthropic_cluster
+    connect_timeout: 5s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: anthropic_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: api.anthropic.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: api.anthropic.com
+    circuit_breakers:
+      thresholds:
+      - max_connections: 100
+        max_requests: 1000
+        max_retries: 3
+
+  # Module Host cluster
+  - name: module_host_cluster
+    connect_timeout: 1s
+    type: STRICT_DNS
+    load_assignment:
+      cluster_name: module_host_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: module-host
+                port_value: 50051
+    health_checks:
+    - timeout: 1s
+      interval: 5s
+      grpc_health_check:
+        service_name: "leash.module.v1.ModuleHost"
+    circuit_breakers:
+      thresholds:
+      - max_connections: 100
+        max_requests: 1000
+        max_retries: 3
+
+# Logging configuration
+layered_runtime:
+  layers:
+  - name: static_layer_0
+    static_layer:
+      envoy:
+        resource_limits:
+          listener:
+            example_listener_name:
+              connection_limit: 10000
+      overload:
+        global_downstream_max_connections: 50000

@@ -1,0 +1,28 @@
+# Prometheus configuration for Leash Gateway
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Module Host metrics
+  - job_name: 'leash-module-host'
+    static_configs:
+      - targets: ['module-host:9090']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  # Envoy admin metrics
+  - job_name: 'leash-envoy'
+    static_configs:
+      - targets: ['envoy:9901']
+    scrape_interval: 10s
+    metrics_path: /stats/prometheus
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -1,0 +1,101 @@
+# Leash Security Gateway - Cursor Rules
+
+## Project Overview
+This is the Leash Security Gateway - an open source LLM security gateway built with Envoy proxy and a pluggable module system. The project uses configuration-based routing to minimize application integration effort while providing centralized governance and observability for LLM traffic.
+
+## Key Project Patterns
+
+### Architecture
+- **Envoy Proxy**: Data plane handling HTTP traffic with ext_proc filter
+- **Module Host**: Go gRPC server processing requests through policy pipeline
+- **Configuration-Based Integration**: Applications only change base URL, no code changes
+- **Plugin System**: Inspectors → Policies → Transformers → Sinks pipeline
+
+### Technology Stack
+- **Core**: Go 1.21+, Envoy Proxy, gRPC, Protocol Buffers
+- **Data**: PostgreSQL (config/usage), Redis (caching/rate limiting)
+- **Observability**: Prometheus, OpenTelemetry, structured JSON logging
+- **Deployment**: Docker, Kubernetes, Helm charts
+
+### Development Principles
+- **Fail-closed for security**: Policy failures block requests
+- **Fail-open for observability**: Inspector failures don't block
+- **Performance first**: <4ms P50 gateway overhead target
+- **Minimal integration**: Only base URL change required
+
+## Code Style Preferences
+
+### Go Development
+- Use structured logging with correlation IDs
+- Implement comprehensive error handling with context
+- Follow Go module patterns with clear package boundaries
+- Use gRPC with protobuf for inter-service communication
+- Implement proper graceful shutdown for all services
+
+### Configuration Management
+- YAML-based configuration with environment variable substitution
+- Hot-reload capability for all configuration changes
+- Comprehensive validation with clear error messages
+- Hierarchical config: global → tenant → module specific
+
+### Testing Strategy
+- Unit tests for all business logic (target >90% coverage)
+- Integration tests for gRPC communication
+- End-to-end tests for complete request flows
+- Load testing with K6 for performance validation
+- Security testing for authentication and authorization
+
+## File Organization
+```
+/cmd/                 # Main applications (gateway, module-host)
+/internal/           # Private application code
+/pkg/                # Public library code
+/proto/              # Protocol buffer definitions
+/configs/            # Configuration files
+/docker/             # Container definitions
+/deployments/        # Kubernetes/Helm charts
+/.cursor/memory-bank/ # Project documentation and context
+```
+
+## Development Workflow
+1. **Plan Mode**: Document changes in memory bank before implementation
+2. **Implementation**: Follow TDD with comprehensive tests
+3. **Integration**: Validate with end-to-end tests
+4. **Performance**: Measure against SLO targets
+5. **Documentation**: Update memory bank with learnings
+
+## Critical Implementation Notes
+- Always use correlation IDs for request tracking
+- Implement proper circuit breakers for provider calls
+- Ensure tenant isolation at all data access points
+- Use structured logging with consistent field names
+- Implement proper resource limits for modules
+- Handle streaming responses with backpressure
+- Validate all configuration before applying changes
+
+## Performance Targets
+- Gateway overhead: <4ms P50, <10ms P95
+- Module processing: <2ms P95 per module
+- Throughput: >1000 RPS sustained
+- Memory usage: <512MB base, <256MB per module
+
+## Security Requirements
+- All inter-service communication via mTLS
+- API key validation with tenant mapping
+- Complete audit trails with request/response logging
+- Field-level PII redaction capabilities
+- Module sandboxing with resource limits
+
+## Memory Bank Integration
+This project uses a comprehensive memory bank system. Always read relevant memory bank files before making changes:
+- `projectbrief.md`: Core project overview and goals
+- `activeContext.md`: Current work focus and decisions
+- `progress.md`: Implementation status and next steps
+- `systemPatterns.md`: Architecture patterns and decisions
+- `techContext.md`: Technology stack and constraints
+
+Update memory bank files when:
+- Making significant architectural decisions
+- Completing major milestones
+- Discovering important implementation insights
+- Changing project direction or priorities

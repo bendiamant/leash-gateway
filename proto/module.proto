@@ -1,0 +1,231 @@
+syntax = "proto3";
+
+package leash.module.v1;
+
+option go_package = "./proto/module";
+
+// Module service for processing requests and responses
+service Module {
+  // Lifecycle management
+  rpc Initialize(InitializeRequest) returns (InitializeResponse);
+  rpc Healthcheck(HealthcheckRequest) returns (HealthcheckResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc GetMetadata(GetMetadataRequest) returns (ModuleMetadata);
+  
+  // Request processing
+  rpc ProcessRequest(ProcessRequestRequest) returns (ProcessRequestResponse);
+  rpc ProcessResponse(ProcessResponseRequest) returns (ProcessResponseResponse);
+  
+  // Configuration management
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  rpc ValidateConfig(ValidateConfigRequest) returns (ValidateConfigResponse);
+}
+
+// Module Host service for external processing
+service ModuleHost {
+  rpc ProcessRequest(ProcessRequestRequest) returns (ProcessRequestResponse);
+  rpc ProcessResponse(ProcessResponseRequest) returns (ProcessResponseResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Lifecycle messages
+message InitializeRequest {
+  map<string, string> config = 1;
+  string module_name = 2;
+  string tenant_id = 3;
+}
+
+message InitializeResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string errors = 3;
+}
+
+message HealthcheckRequest {}
+
+message HealthcheckResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+  int64 last_check = 4;
+  int64 check_duration_ms = 5;
+}
+
+message ShutdownRequest {
+  int32 timeout_seconds = 1;
+}
+
+message ShutdownResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetMetadataRequest {}
+
+message ModuleMetadata {
+  string name = 1;
+  string version = 2;
+  ModuleType type = 3;
+  string description = 4;
+  string author = 5;
+  repeated string dependencies = 6;
+  map<string, string> capabilities = 7;
+}
+
+// Request processing messages
+message ProcessRequestRequest {
+  string request_id = 1;
+  int64 timestamp = 2;
+  string tenant_id = 3;
+  string provider = 4;
+  HttpRequest http_request = 5;
+  map<string, string> annotations = 6;
+  ModuleConfig module_config = 7;
+}
+
+message ProcessRequestResponse {
+  Action action = 1;
+  bytes modified_body = 2;
+  map<string, string> additional_headers = 3;
+  string block_reason = 4;
+  map<string, string> annotations = 5;
+  int64 processing_time_ms = 6;
+  double confidence = 7;
+  map<string, string> metadata = 8;
+}
+
+message ProcessResponseRequest {
+  string request_id = 1;
+  int64 timestamp = 2;
+  string tenant_id = 3;
+  string provider = 4;
+  HttpRequest http_request = 5;
+  HttpResponse http_response = 6;
+  map<string, string> annotations = 7;
+  ModuleConfig module_config = 8;
+  TokenUsage token_usage = 9;
+  double cost_usd = 10;
+  int64 provider_latency_ms = 11;
+}
+
+message ProcessResponseResponse {
+  Action action = 1;
+  bytes modified_body = 2;
+  map<string, string> modified_headers = 3;
+  map<string, string> annotations = 4;
+  int64 processing_time_ms = 5;
+  map<string, string> metadata = 6;
+}
+
+// Configuration messages
+message UpdateConfigRequest {
+  map<string, string> config = 1;
+  bool validate_only = 2;
+}
+
+message UpdateConfigResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string errors = 3;
+}
+
+message ValidateConfigRequest {
+  map<string, string> config = 1;
+}
+
+message ValidateConfigResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+  repeated string warnings = 3;
+}
+
+// Health check messages
+message HealthRequest {}
+
+message HealthResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+// HTTP request/response structures
+message HttpRequest {
+  string method = 1;
+  string path = 2;
+  map<string, string> headers = 3;
+  bytes body = 4;
+  string user_agent = 5;
+  string client_ip = 6;
+  int64 size_bytes = 7;
+}
+
+message HttpResponse {
+  int32 status_code = 1;
+  map<string, string> headers = 2;
+  bytes body = 3;
+  int64 size_bytes = 4;
+}
+
+// Token usage information
+message TokenUsage {
+  int64 prompt_tokens = 1;
+  int64 completion_tokens = 2;
+  int64 total_tokens = 3;
+}
+
+// Module configuration
+message ModuleConfig {
+  string name = 1;
+  string type = 2;
+  bool enabled = 3;
+  int32 priority = 4;
+  map<string, string> config = 5;
+  repeated Condition conditions = 6;
+  ResourceLimits resources = 7;
+  Timeouts timeouts = 8;
+}
+
+message Condition {
+  string field = 1;
+  string operator = 2;
+  string value = 3;
+}
+
+message ResourceLimits {
+  int32 max_memory_mb = 1;
+  int32 max_cpu_percent = 2;
+  int32 max_execution_time_ms = 3;
+}
+
+message Timeouts {
+  int32 initialization_ms = 1;
+  int32 processing_ms = 2;
+  int32 shutdown_ms = 3;
+}
+
+// Enums
+enum ModuleType {
+  MODULE_TYPE_UNSPECIFIED = 0;
+  MODULE_TYPE_INSPECTOR = 1;
+  MODULE_TYPE_POLICY = 2;
+  MODULE_TYPE_TRANSFORMER = 3;
+  MODULE_TYPE_SINK = 4;
+}
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_CONTINUE = 1;
+  ACTION_BLOCK = 2;
+  ACTION_TRANSFORM = 3;
+  ACTION_ANNOTATE = 4;
+  ACTION_RETRY = 5;
+  ACTION_ROUTE = 6;
+}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_UNHEALTHY = 2;
+  HEALTH_STATUS_DEGRADED = 3;
+  HEALTH_STATUS_UNKNOWN = 4;
+}

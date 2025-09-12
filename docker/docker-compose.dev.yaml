@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  envoy:
+    image: envoyproxy/envoy:v1.28-latest
+    ports:
+      - "8080:8080"  # Gateway port
+      - "9901:9901"  # Admin port
+    volumes:
+      - ../configs/envoy:/etc/envoy:ro
+    depends_on:
+      - module-host
+    environment:
+      - ENVOY_LOG_LEVEL=info
+    command: ["/usr/local/bin/envoy", "-c", "/etc/envoy/bootstrap.yaml", "--service-cluster", "leash-gateway"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9901/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - leash-network
+
+  module-host:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.module-host
+    ports:
+      - "50051:50051"  # gRPC port
+      - "8081:8081"    # Health port
+      - "9090:9090"    # Metrics port
+    environment:
+      - DATABASE_URL=postgres://leash:leash@postgres:5432/leash?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - CONFIG_PATH=/etc/leash/config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../configs/gateway:/etc/leash:ro
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - leash-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: leash
+      POSTGRES_USER: leash
+      POSTGRES_PASSWORD: leash
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leash"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - leash-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - leash-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"  # Use 9091 to avoid conflict with module-host metrics
+    volumes:
+      - ../configs/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - leash-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../configs/grafana:/etc/grafana/provisioning:ro
+    networks:
+      - leash-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  leash-network:
+    driver: bridge
