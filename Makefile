@@ -130,6 +130,29 @@ security-scan: check-go
 	@gosec ./... 2>/dev/null || echo "gosec not installed, skipping security scan"
 
 # Documentation
+# Demo application
+demo-setup:
+	@echo "Setting up demo application..."
+	@cd demo-app && npm install
+	@cd sdks/typescript && npm install
+
+demo-dev:
+	@echo "Starting demo in development mode..."
+	@cd demo-app && npm run dev
+
+demo-build:
+	@echo "Building demo application..."
+	@cd demo-app && npm run build
+
+demo-full:
+	@echo "Starting full demo environment..."
+	@docker-compose -f docker/docker-compose.demo.yaml up -d
+
+demo-down:
+	@echo "Stopping demo environment..."
+	@docker-compose -f docker/docker-compose.demo.yaml down
+
+# Documentation
 docs-serve:
 	@echo "Serving documentation..."
 	@python3 -m http.server 8000 -d docs 2>/dev/null || echo "Python not available for docs server"
@@ -150,9 +173,17 @@ help:
 	@echo "  test-gateway   - Test gateway connectivity"
 	@echo "  load-test      - Run load tests (requires k6)"
 	@echo "  security-scan  - Run security scans"
+	@echo "  demo-setup     - Set up demo application"
+	@echo "  demo-dev       - Start demo in development mode"
+	@echo "  demo-full      - Start complete demo environment"
 	@echo "  help           - Show this help"
 	@echo ""
 	@echo "Quick start (without Go installed):"
 	@echo "  1. make dev-setup"
 	@echo "  2. make dev-up"
 	@echo "  3. make test-gateway"
+	@echo ""
+	@echo "Demo application:"
+	@echo "  1. make demo-setup"
+	@echo "  2. make demo-full"
+	@echo "  3. Open http://localhost:3001"

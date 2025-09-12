@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # Core gateway services (same as dev)
+  envoy:
+    image: envoyproxy/envoy:v1.28-latest
+    ports:
+      - "8080:8080"  # Gateway port
+      - "9901:9901"  # Admin port
+    volumes:
+      - ../configs/envoy:/etc/envoy:ro
+    depends_on:
+      - module-host
+    environment:
+      - ENVOY_LOG_LEVEL=info
+    command: ["/usr/local/bin/envoy", "-c", "/etc/envoy/bootstrap.yaml", "--service-cluster", "leash-gateway"]
+    networks:
+      - leash-network
+
+  module-host:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.module-host
+    ports:
+      - "50051:50051"  # gRPC port
+      - "8081:8081"    # Health port
+      - "9090:9090"    # Metrics port
+    environment:
+      - DATABASE_URL=postgres://leash:leash@postgres:5432/leash?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=info
+      - CONFIG_PATH=/etc/leash/config.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../configs/gateway:/etc/leash:ro
+    networks:
+      - leash-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: leash
+      POSTGRES_USER: leash
+      POSTGRES_PASSWORD: leash
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leash"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - leash-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - leash-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ../configs/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - leash-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - leash-network
+
+  # Demo application
+  demo-app:
+    build:
+      context: ../demo-app
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - VITE_GATEWAY_URL=http://localhost:8080
+      - VITE_API_KEY=demo-key
+      - VITE_DEBUG=true
+    depends_on:
+      - envoy
+    networks:
+      - leash-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  leash-network:
+    driver: bridge
