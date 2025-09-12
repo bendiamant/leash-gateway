@@ -99,6 +99,22 @@ providers:
         cost_per_1k_input_tokens: 15.00
         cost_per_1k_output_tokens: 75.00
 
+  google:
+    endpoint: "https://generativelanguage.googleapis.com/v1"
+    timeout: "30s"
+    retry_attempts: 3
+    circuit_breaker:
+      failure_threshold: 5
+      success_threshold: 3
+      timeout: "60s"
+    models:
+      - name: "gemini-1.5-flash"
+        cost_per_1k_input_tokens: 0.075
+        cost_per_1k_output_tokens: 0.30
+      - name: "gemini-1.5-pro"
+        cost_per_1k_input_tokens: 3.50
+        cost_per_1k_output_tokens: 10.50
+
 # Module configurations
 modules:
   rate-limiter:
@@ -111,6 +127,38 @@ modules:
       default_window: "1h"
       storage: "memory"  # memory, redis
   
+  content-filter:
+    enabled: true
+    type: "policy"
+    priority: 300
+    config:
+      blocked_keywords:
+        - "inappropriate"
+        - "harmful"
+        - "dangerous"
+      severity_threshold: 0.8
+      action: "block"  # block, warn, annotate, redact
+      case_sensitive: false
+      check_requests: true
+      check_responses: true
+
+  cost-tracker:
+    enabled: true
+    type: "sink"
+    priority: 900
+    config:
+      storage: "memory"
+      aggregation_window: "1h"
+      track_requests: true
+      track_responses: true
+      alert_thresholds:
+        - threshold: 100.00
+          notification: "log"
+          message: "Daily cost limit approaching"
+        - threshold: 500.00
+          notification: "log"
+          message: "Daily cost limit exceeded"
+
   logger:
     enabled: true
     type: "sink"

@@ -40,6 +40,13 @@ static_resources:
                   cluster: anthropic_cluster
                   prefix_rewrite: "/v1/"
                   timeout: 30s
+              # Google routing
+              - match:
+                  prefix: "/v1/google/"
+                route:
+                  cluster: google_cluster
+                  prefix_rewrite: "/v1/"
+                  timeout: 30s
               # Health check endpoint
               - match:
                   prefix: "/health"
@@ -133,6 +140,31 @@ static_resources:
       typed_config:
         "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
         sni: api.anthropic.com
+    circuit_breakers:
+      thresholds:
+      - max_connections: 100
+        max_requests: 1000
+        max_retries: 3
+
+  # Google cluster
+  - name: google_cluster
+    connect_timeout: 5s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    load_assignment:
+      cluster_name: google_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: generativelanguage.googleapis.com
+                port_value: 443
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: generativelanguage.googleapis.com
     circuit_breakers:
       thresholds:
       - max_connections: 100
