@@ -60,6 +60,7 @@ response = client.chat.completions.create(
 )
 ```
 
+
 ### URL Routing Structure
 
 ```
