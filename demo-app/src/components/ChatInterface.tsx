@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, AlertCircle, Zap, DollarSign } from 'lucide-react';
-import { LeashLLM, ChatCompletionParams, Message, LeashError } from '@leash-security/sdk';
+import { Send, Bot, AlertCircle, Zap, DollarSign } from 'lucide-react';
+
+interface Message {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
 
 interface ChatMessage extends Message {
   id: string;
@@ -9,6 +13,52 @@ interface ChatMessage extends Message {
   cost?: number;
   latency?: number;
   error?: string;
+}
+
+interface ChatCompletionParams {
+  model: string;
+  messages: Message[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+interface ChatCompletionResponse {
+  choices: Array<{
+    message: Message;
+  }>;
+  usage: {
+    total_tokens: number;
+    cost_usd?: number;
+  };
+}
+
+interface LeashError extends Error {
+  code: string;
+  message: string;
+}
+
+// Mock LeashLLM for demo purposes
+class LeashLLM {
+  constructor(_config: any) {}
+  
+  async chatCompletions(params: ChatCompletionParams): Promise<ChatCompletionResponse> {
+    // Mock implementation for demo
+    return {
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: `Mock response from ${params.model}. In a real implementation, this would route through the Leash Gateway to the actual provider.`
+        }
+      }],
+      usage: {
+        total_tokens: 50,
+        cost_usd: 0.001
+      }
+    };
+  }
+  
+  addEventListener(_listener: any) {}
+  removeEventListener(_listener: any) {}
 }
 
 interface ChatInterfaceProps {

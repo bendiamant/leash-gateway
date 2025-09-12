@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Activity, DollarSign, Zap, Shield, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Activity, DollarSign, Zap, Shield, CheckCircle } from 'lucide-react';
 
 interface MetricsDashboardProps {
   metrics: {
@@ -31,7 +31,7 @@ export function MetricsDashboard({ metrics }: MetricsDashboardProps) {
           requests: metrics.totalRequests,
           cost: metrics.totalCost,
           latency: metrics.lastLatency || 0,
-        }].slice(-20)); // Keep last 20 data points
+        }].slice(-20); // Keep last 20 data points
         
         return newData;
       });
@@ -143,7 +143,7 @@ export function MetricsDashboard({ metrics }: MetricsDashboardProps) {
                 fill="#8884d8"
                 dataKey="requests"
               >
-                {providerData.map((entry, index) => (
+                {providerData.map((_, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>

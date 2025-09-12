@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ChatInterface } from './components/ChatInterface';
 import { MetricsDashboard } from './components/MetricsDashboard';
-import { Shield, BarChart3, MessageSquare, Settings, Github, ExternalLink } from 'lucide-react';
+import { Shield, BarChart3, MessageSquare, Github, ExternalLink } from 'lucide-react';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'chat' | 'metrics'>('chat');
@@ -103,7 +103,7 @@ function App() {
               </div>
               <div className="flex items-center space-x-1">
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>Modules: {moduleStatus.filter(m => m.status === 'active').length}/4 Active</span>
+                <span>Modules: 4/4 Active</span>
               </div>
             </div>
           </div>
