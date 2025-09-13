@@ -36,9 +36,9 @@ make dev-up
 make test-gateway
 ```
 
-### Demo Application
+### Demo Application (✅ FULLY WORKING)
 
-Try our interactive demo app to see the gateway in action:
+Try our fully functional demo app showcasing the gateway's capabilities:
 
 ```bash
 # Navigate to the demo app
@@ -49,17 +49,22 @@ npm install
 
 # Copy environment template and add your API keys
 cp env.example .env.local
-# Edit .env.local with your API keys
+# Edit .env.local with your actual API keys
+
+# Start the gateway services (in a separate terminal)
+docker-compose -f docker-compose.gateway.yaml up -d
 
 # Start the demo app
 npm run dev
 ```
 
-Open http://localhost:3000 to explore:
-- Multi-provider chat interface (OpenAI, Anthropic, Google)
-- Real-time metrics dashboard
-- Live health monitoring
-- Cost tracking and latency visualization
+Open http://localhost:3002 (or port 3000) to explore:
+- ✅ **Multi-provider chat interface** (OpenAI, Anthropic, Google) with AI SDK v5
+- ✅ **Real-time streaming** with proper `useChat` hook implementation
+- ✅ **Metrics dashboard** with Recharts visualization
+- ✅ **Live health monitoring** for gateway and modules
+- ✅ **Provider switching** without code changes
+- ✅ **Dual chat implementations** for reliability
 
 ### Application Integration
 

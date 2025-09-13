@@ -2,8 +2,11 @@
 
 A modern, standalone demo application showcasing the capabilities of the Leash Security Gateway - an enterprise-grade LLM security and governance platform.
 
-![Leash Gateway Demo](https://img.shields.io/badge/Status-Live%20Demo-green)
+![Leash Gateway Demo](https://img.shields.io/badge/Status-FULLY%20WORKING-brightgreen)
+![AI SDK](https://img.shields.io/badge/AI%20SDK-v5-blue)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue)
+
+> ✅ **Status**: Demo application is fully functional with AI SDK v5 integration complete!
 
 ## ✨ Features
 
@@ -283,6 +286,64 @@ npm run type-check
 # Run in development with hot reload
 npm run dev
 ```
+
+## 🔧 Troubleshooting
+
+### Common Issues and Solutions
+
+1. **Gateway Connection Refused**
+   ```bash
+   # Check if services are running
+   docker ps
+   
+   # View gateway logs
+   docker logs leash-gateway-1
+   
+   # Restart services
+   docker-compose -f docker-compose.gateway.yaml restart
+   ```
+   - Verify `GATEWAY_URL` in `.env.local` (should be `http://localhost:8080`)
+   - Ensure ports 8080, 8081, 9090 are not in use
+
+2. **Chat Not Responding / Streaming Issues**
+   - Check browser console for errors (F12)
+   - Verify API route logs in terminal running `npm run dev`
+   - Try switching providers using the selector
+   - Use SimpleChat mode as fallback (toggle button in UI)
+   - For streaming issues, ensure you're using a modern browser
+
+3. **API Key Errors**
+   ```bash
+   # Test your API keys directly
+   curl https://api.openai.com/v1/models \
+     -H "Authorization: Bearer $OPENAI_API_KEY"
+   ```
+   - Verify keys in `.env.local` have no extra spaces/quotes
+   - Check provider-specific formats:
+     - OpenAI: `sk-...`
+     - Anthropic: `sk-ant-...`
+     - Google: API key from Google AI Studio
+
+4. **No Metrics Displayed**
+   - Generate some traffic first (send chat messages)
+   - Check Prometheus directly: http://localhost:9090
+   - Verify `GATEWAY_METRICS_URL` in `.env.local`
+   - Wait 30 seconds for metrics to populate
+
+5. **AI SDK v5 Migration Issues**
+   If migrating from older code:
+   - `useChat` API has completely changed
+   - Input state must be managed manually with `useState`
+   - Use `sendMessage` instead of `handleSubmit`
+   - Use `toUIMessageStreamResponse()` not `toDataStreamResponse()`
+   - See `.cursor/memory-bank/ai-sdk-v5-migration.md` for full guide
+
+### Debug Mode
+
+The app includes debug features:
+- Toggle between SimpleChat and ChatInterfaceV5 in the UI
+- Check API logs in the terminal
+- Use browser DevTools Network tab to inspect streaming responses
 
 ## 🚢 Deployment
 
