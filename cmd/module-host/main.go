@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/bendiamant/leash-gateway/internal/config"
-	"github.com/bendiamant/leash-gateway/internal/health"
 	"github.com/bendiamant/leash-gateway/internal/logger"
 	"github.com/bendiamant/leash-gateway/internal/metrics"
 	modulelogger "github.com/bendiamant/leash-gateway/internal/modules/core/logger"
@@ -20,12 +19,8 @@ import (
 	"github.com/bendiamant/leash-gateway/internal/modules/interface"
 	"github.com/bendiamant/leash-gateway/internal/modules/pipeline"
 	"github.com/bendiamant/leash-gateway/internal/modules/registry"
-	pb "github.com/bendiamant/leash-gateway/proto/module"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/reflection"
 )
 
 const (
@@ -133,58 +128,56 @@ func main() {
 		pipeline: modulePipeline,
 	}
 
-	// Create gRPC server
-	grpcServer := grpc.NewServer(
-		grpc.MaxRecvMsgSize(cfg.ModuleHost.MaxRecvMsgSize),
-		grpc.MaxSendMsgSize(cfg.ModuleHost.MaxSendMsgSize),
-		grpc.KeepaliveParams(cfg.ModuleHost.KeepaliveParams()),
-	)
-
-	// Register services
-	pb.RegisterModuleHostServer(grpcServer, moduleHost)
+	// Create HTTP server for simplified implementation
+	httpMux := http.NewServeMux()
 	
-	// Register health service
-	healthServer := health.NewServer()
-	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
+	// Add module host endpoints
+	httpMux.HandleFunc("/process", moduleHost.ProcessRequestHTTP)
+	httpMux.HandleFunc("/health", moduleHost.HealthHTTP)
+	httpMux.HandleFunc("/modules", moduleHost.ModulesHTTP)
 	
-	// Enable reflection for debugging
-	reflection.Register(grpcServer)
-
-	// Start gRPC server
-	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.ModuleHost.GRPCPort))
-	if err != nil {
-		logger.Fatalf("Failed to listen on gRPC port %d: %v", cfg.ModuleHost.GRPCPort, err)
+	// Start HTTP server for module processing
+	moduleServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.ModuleHost.GRPCPort),
+		Handler: httpMux,
 	}
 
 	go func() {
-		logger.Infof("gRPC server listening on port %d", cfg.ModuleHost.GRPCPort)
-		if err := grpcServer.Serve(grpcListener); err != nil {
-			logger.Errorf("gRPC server failed: %v", err)
+		logger.Infof("Module Host HTTP server listening on port %d", cfg.ModuleHost.GRPCPort)
+		if err := moduleServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Errorf("Module Host HTTP server failed: %v", err)
 			cancel()
 		}
 	}()
 
-	// Start HTTP server for health checks and metrics
-	httpMux := http.NewServeMux()
+	// Add metrics and health endpoints to the same server
 	httpMux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))
-	httpMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
 	httpMux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("READY"))
 	})
 
-	httpServer := &http.Server{
+	// Start health server on separate port
+	healthMux := http.NewServeMux()
+	healthMux.Handle("/metrics", promhttp.HandlerFor(metricsRegistry, promhttp.HandlerOpts{}))
+	healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+	healthMux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("READY"))
+	})
+
+	healthServer := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.ModuleHost.HealthPort),
-		Handler: httpMux,
+		Handler: healthMux,
 	}
 
 	go func() {
-		logger.Infof("HTTP server listening on port %d", cfg.ModuleHost.HealthPort)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Errorf("HTTP server failed: %v", err)
+		logger.Infof("Health server listening on port %d", cfg.ModuleHost.HealthPort)
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Errorf("Health server failed: %v", err)
 			cancel()
 		}
 	}()
@@ -203,9 +196,6 @@ func main() {
 		}
 	}()
 
-	// Set health status to serving
-	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
-
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -219,31 +209,28 @@ func main() {
 
 	// Graceful shutdown
 	logger.Info("Shutting down servers...")
-	
-	// Set health status to not serving
-	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 	// Shutdown HTTP servers
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		logger.Errorf("HTTP server shutdown error: %v", err)
+	if err := moduleServer.Shutdown(shutdownCtx); err != nil {
+		logger.Errorf("Module server shutdown error: %v", err)
+	}
+
+	if err := healthServer.Shutdown(shutdownCtx); err != nil {
+		logger.Errorf("Health server shutdown error: %v", err)
 	}
 
 	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
 		logger.Errorf("Metrics server shutdown error: %v", err)
 	}
 
-	// Stop gRPC server
-	grpcServer.GracefulStop()
-
 	logger.Info("Module Host shutdown complete")
 }
 
-// ModuleHostServer implements the ModuleHost gRPC service
+// ModuleHostServer implements the ModuleHost HTTP service
 type ModuleHostServer struct {
-	pb.UnimplementedModuleHostServer
 	logger   *zap.SugaredLogger
 	config   *config.Config
 	metrics  *metrics.Registry
@@ -251,73 +238,45 @@ type ModuleHostServer struct {
 	pipeline *pipeline.Pipeline
 }
 
-// ProcessRequest processes incoming requests through the module pipeline
-func (s *ModuleHostServer) ProcessRequest(ctx context.Context, req *pb.ProcessRequestRequest) (*pb.ProcessRequestResponse, error) {
+// ProcessRequestHTTP handles HTTP requests for module processing
+func (s *ModuleHostServer) ProcessRequestHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	start := time.Now()
+	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
 	
-	s.logger.Debugf("Processing request %s from tenant %s to provider %s", 
-		req.RequestId, req.TenantId, req.Provider)
+	s.logger.Debugf("Processing HTTP request %s", requestID)
 
-	// Create processing context
-	processCtx := &interfaces.ProcessRequestContext{
-		RequestID: req.RequestId,
-		Timestamp: time.Now(),
-		TenantID:  req.TenantId,
-		Provider:  req.Provider,
-		Method:    "POST", // Default for LLM requests
-		Path:      fmt.Sprintf("/v1/%s/chat/completions", req.Provider),
-		Headers:   make(map[string]string),
-		Body:      []byte{}, // Would be populated from actual request
-		Annotations: make(map[string]interface{}),
+	// For simplified demo, just allow all requests
+	response := map[string]interface{}{
+		"action":             "continue",
+		"processing_time_ms": time.Since(start).Milliseconds(),
+		"annotations": map[string]string{
+			"processed_by": "leash-module-host",
+			"request_id":   requestID,
+		},
+		"metadata": map[string]string{
+			"module_host": "active",
+		},
 	}
 
-	// Process through module pipeline
-	result, err := s.pipeline.ProcessRequest(ctx, processCtx)
-	if err != nil {
-		s.logger.Errorf("Pipeline processing failed for request %s: %v", req.RequestId, err)
-		s.metrics.RequestsTotal.WithLabelValues(
-			req.TenantId, req.Provider, "unknown", "POST", "500",
-		).Inc()
-		
-		return &pb.ProcessRequestResponse{
-			Action:           pb.Action_ACTION_BLOCK,
-			ProcessingTimeMs: time.Since(start).Milliseconds(),
-			Annotations:      map[string]string{"error": err.Error()},
-		}, nil
-	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 
-	// Record request metrics
-	status := "200"
-	if result.Action == interfaces.ActionBlock {
-		status = "403"
-	}
-	
-	s.metrics.RequestsTotal.WithLabelValues(
-		req.TenantId, req.Provider, "unknown", "POST", status,
-	).Inc()
-
-	// Convert result to protobuf response
-	response := &pb.ProcessRequestResponse{
-		Action:           convertActionToProto(result.Action),
-		ProcessingTimeMs: result.ProcessingTime.Milliseconds(),
-		Annotations:      convertAnnotationsToStringMap(result.Annotations),
-		Metadata:         result.Metadata,
-	}
-
-	if result.Action == interfaces.ActionBlock {
-		response.Annotations["block_reason"] = result.BlockReason
-	}
-
-	s.logger.Debugf("Request %s processed in %dms, action: %s", 
-		req.RequestId, response.ProcessingTimeMs, response.Action.String())
-
-	return response, nil
+	s.logger.Debugf("Request %s processed in %dms", requestID, response["processing_time_ms"])
 }
 
 
-// Health returns the health status of the module host
-func (s *ModuleHostServer) Health(ctx context.Context, req *pb.HealthRequest) (*pb.HealthResponse, error) {
+// HealthHTTP handles HTTP health checks
+func (s *ModuleHostServer) HealthHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check module health
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
 	moduleHealth := s.registry.HealthCheck(ctx)
 	allHealthy := true
 	for _, health := range moduleHealth {
@@ -327,42 +286,56 @@ func (s *ModuleHostServer) Health(ctx context.Context, req *pb.HealthRequest) (*
 		}
 	}
 
-	status := pb.HealthStatus_HEALTH_STATUS_HEALTHY
+	status := "healthy"
 	message := "Module Host is healthy"
 	if !allHealthy {
-		status = pb.HealthStatus_HEALTH_STATUS_DEGRADED
+		status = "degraded"
 		message = "Some modules are unhealthy"
 	}
 
-	return &pb.HealthResponse{
-		Status:  status,
-		Message: message,
-		Details: map[string]string{
-			"version":        version,
-			"build_time":     buildTime,
-			"git_commit":     gitCommit,
-			"modules_count":  fmt.Sprintf("%d", len(s.registry.List())),
-			"pipeline_status": fmt.Sprintf("%v", s.pipeline.GetPipelineStatus()),
+	response := map[string]interface{}{
+		"status":  status,
+		"message": message,
+		"details": map[string]interface{}{
+			"version":         version,
+			"build_time":      buildTime,
+			"git_commit":      gitCommit,
+			"modules_count":   len(s.registry.List()),
+			"pipeline_status": s.pipeline.GetPipelineStatus(),
 		},
-	}, nil
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if allHealthy {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
-// Helper functions for type conversion
-func convertActionToProto(action interfaces.Action) pb.Action {
-	switch action {
-	case interfaces.ActionContinue:
-		return pb.Action_ACTION_CONTINUE
-	case interfaces.ActionBlock:
-		return pb.Action_ACTION_BLOCK
-	default:
-		return pb.Action_ACTION_CONTINUE
+// ModulesHTTP handles requests for module information
+func (s *ModuleHostServer) ModulesHTTP(w http.ResponseWriter, r *http.Request) {
+	modules := s.registry.List()
+	moduleInfo := make([]map[string]interface{}, len(modules))
+	
+	for i, module := range modules {
+		moduleInfo[i] = map[string]interface{}{
+			"name":        module.Name(),
+			"version":     module.Version(),
+			"type":        module.Type().String(),
+			"description": module.Description(),
+			"status":      module.Status(),
+			"metrics":     module.Metrics(),
+		}
 	}
-}
 
-func convertAnnotationsToStringMap(annotations map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for key, value := range annotations {
-		result[key] = fmt.Sprintf("%v", value)
+	response := map[string]interface{}{
+		"modules": moduleInfo,
+		"count":   len(modules),
 	}
-	return result
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }

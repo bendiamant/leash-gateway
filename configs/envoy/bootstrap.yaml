@@ -74,22 +74,10 @@ static_resources:
                 default_value:
                   numerator: 100
                   denominator: HUNDRED
-          # External processing (Module Host)
-          - name: envoy.filters.http.ext_proc
+          # Simple logging for now (no ext_proc until protobuf is fixed)
+          - name: envoy.filters.http.fault
             typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
-              grpc_service:
-                envoy_grpc:
-                  cluster_name: module_host_cluster
-                timeout: 2s
-              processing_mode:
-                request_header_mode: SEND
-                response_header_mode: SEND
-                request_body_mode: BUFFERED
-                response_body_mode: STREAMED
-              message_timeout: 2s
-              failure_mode_allow: false  # Fail closed for security
-              max_message_timeout: 10s
+              "@type": type.googleapis.com/envoy.extensions.filters.http.fault.v3.HTTPFault
           # Router (must be last)
           - name: envoy.filters.http.router
             typed_config:

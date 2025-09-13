@@ -75,6 +75,8 @@ providers:
       interval: "30s"
       timeout: "5s"
       path: "/v1/models"
+    headers:
+      Authorization: "Bearer ${OPENAI_API_KEY:-sk-demo-key-replace-with-real}"
     models:
       - name: "gpt-4o-mini"
         cost_per_1k_input_tokens: 0.15
@@ -91,6 +93,9 @@ providers:
       failure_threshold: 5
       success_threshold: 3
       timeout: "60s"
+    headers:
+      x-api-key: "${ANTHROPIC_API_KEY:-ant-demo-key-replace-with-real}"
+      anthropic-version: "2023-06-01"
     models:
       - name: "claude-3-sonnet-20240229"
         cost_per_1k_input_tokens: 3.00

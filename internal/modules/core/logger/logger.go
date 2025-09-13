@@ -9,7 +9,6 @@ import (
 
 	"github.com/bendiamant/leash-gateway/internal/modules/interface"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // Logger implements a structured logging module

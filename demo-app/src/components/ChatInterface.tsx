@@ -37,24 +37,77 @@ interface LeashError extends Error {
   message: string;
 }
 
-// Mock LeashLLM for demo purposes
+// Simplified LeashLLM that makes actual HTTP calls
 class LeashLLM {
-  constructor(_config: any) {}
+  private gatewayUrl: string;
+  private apiKey: string;
+
+  constructor(config: any) {
+    debugger;
+    this.gatewayUrl = config.gatewayUrl || 'http://localhost:8080';
+    this.apiKey = config.apiKey || 'demo-key';
+  }
   
   async chatCompletions(params: ChatCompletionParams): Promise<ChatCompletionResponse> {
-    // Mock implementation for demo
-    return {
-      choices: [{
-        message: {
-          role: 'assistant',
-          content: `Mock response from ${params.model}. In a real implementation, this would route through the Leash Gateway to the actual provider.`
-        }
-      }],
-      usage: {
-        total_tokens: 50,
-        cost_usd: 0.001
+    const provider = this.detectProvider(params.model);
+    const url = `${this.gatewayUrl}/v1/${provider}/chat/completions`;
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: params.model,
+          messages: params.messages,
+          temperature: params.temperature || 0.7,
+          max_tokens: params.max_tokens || 1000,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-    };
+
+      const data = await response.json();
+      
+      return {
+        choices: data.choices || [{
+          message: {
+            role: 'assistant',
+            content: `Response from ${provider} (${params.model}): ${data.choices?.[0]?.message?.content || 'No response content'}`
+          }
+        }],
+        usage: {
+          total_tokens: data.usage?.total_tokens || 50,
+          cost_usd: data.usage?.cost_usd || 0.001
+        }
+      };
+    } catch (error) {
+      // If gateway is not available, show a helpful error
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: `⚠️ Gateway not available: ${errorMessage}. The Leash Gateway needs to be running to process real requests. Currently showing demo mode.`
+          }
+        }],
+        usage: {
+          total_tokens: 0,
+          cost_usd: 0
+        }
+      };
+    }
+  }
+  
+  private detectProvider(model: string): string {
+    if (model.startsWith('gpt-')) return 'openai';
+    if (model.startsWith('claude-')) return 'anthropic';
+    if (model.startsWith('gemini-')) return 'google';
+    return 'openai'; // default
   }
   
   addEventListener(_listener: any) {}
@@ -84,9 +137,10 @@ export function ChatInterface({ selectedProvider, onProviderSwitch, onMetricsUpd
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Initialize Leash client
+  debugger;
   const leashClient = new LeashLLM({
     gatewayUrl: import.meta.env.VITE_GATEWAY_URL || 'http://localhost:8080',
-    apiKey: import.meta.env.VITE_API_KEY || 'demo-key',
+    apiKey: import.meta.env.VITE_OPENAI_API_KEY || 'sk-demo-key-replace-with-real',
     fallbackProviders: ['openai', 'anthropic', 'google'],
     debugMode: true,
   });

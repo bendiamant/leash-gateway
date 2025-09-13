@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/leash-security/gateway/internal/config"
+	"github.com/bendiamant/leash-gateway/internal/config"
 )
 
 func TestBasicSetup(t *testing.T) {

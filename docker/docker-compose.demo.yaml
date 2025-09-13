@@ -8,7 +8,7 @@ services:
       - "8080:8080"  # Gateway port
       - "9901:9901"  # Admin port
     volumes:
-      - ../configs/envoy:/etc/envoy:ro
+      - ../configs/envoy/bootstrap-simple.yaml:/etc/envoy/bootstrap.yaml:ro
     depends_on:
       - module-host
     environment:
@@ -30,6 +30,10 @@ services:
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=info
       - CONFIG_PATH=/etc/leash/config.yaml
+      # Add your API keys here or pass via command line
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-demo-key-replace-with-real}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-ant-demo-key-replace-with-real}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-google-demo-key-replace-with-real}
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,7 +112,8 @@ services:
       - "3001:3001"
     environment:
       - VITE_GATEWAY_URL=http://localhost:8080
-      - VITE_API_KEY=demo-key
+      - VITE_OPENAI_API_KEY=${OPENAI_API_KEY:-sk-demo-key-replace-with-real}
+      - VITE_ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-ant-demo-key-replace-with-real}
       - VITE_DEBUG=true
     depends_on:
       - envoy
