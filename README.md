@@ -36,6 +36,31 @@ make dev-up
 make test-gateway
 ```
 
+### Demo Application
+
+Try our interactive demo app to see the gateway in action:
+
+```bash
+# Navigate to the demo app
+cd leash-demo-app
+
+# Install dependencies
+npm install
+
+# Copy environment template and add your API keys
+cp env.example .env.local
+# Edit .env.local with your API keys
+
+# Start the demo app
+npm run dev
+```
+
+Open http://localhost:3000 to explore:
+- Multi-provider chat interface (OpenAI, Anthropic, Google)
+- Real-time metrics dashboard
+- Live health monitoring
+- Cost tracking and latency visualization
+
 ### Application Integration
 
 Change your application's base URL configuration:

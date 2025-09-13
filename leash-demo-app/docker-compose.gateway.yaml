@@ -1,12 +1,15 @@
 version: '3.8'
 
+# Standalone docker-compose for running just the Leash Gateway services
+# The demo app runs separately as a Next.js application
+
 services:
-  # Core gateway services (same as dev)
+  # Envoy Proxy - Main gateway entry point
   envoy:
     image: envoyproxy/envoy:v1.28-latest
     ports:
-      - "8080:8080"  # Gateway port
-      - "9901:9901"  # Admin port
+      - "8080:8080"  # Gateway port for LLM traffic
+      - "9901:9901"  # Admin interface
     volumes:
       - ../configs/envoy/bootstrap-simple.yaml:/etc/envoy/bootstrap.yaml:ro
     depends_on:
@@ -16,24 +19,30 @@ services:
     command: ["/usr/local/bin/envoy", "-c", "/etc/envoy/bootstrap.yaml", "--service-cluster", "leash-gateway"]
     networks:
       - leash-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9901/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
+  # Module Host - Processes requests through security modules
   module-host:
     build:
       context: ..
       dockerfile: docker/Dockerfile.module-host
     ports:
-      - "50051:50051"  # gRPC port
-      - "8081:8081"    # Health port
-      - "9090:9090"    # Metrics port
+      - "50051:50051"  # gRPC port for ext_proc
+      - "8081:8081"    # Health check endpoint
+      - "9090:9090"    # Prometheus metrics
     environment:
       - DATABASE_URL=postgres://leash:leash@postgres:5432/leash?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=info
       - CONFIG_PATH=/etc/leash/config.yaml
-      # Add your API keys here or pass via command line
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-demo-key-replace-with-real}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-ant-demo-key-replace-with-real}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-google-demo-key-replace-with-real}
+      # API Keys - Set these via environment or .env file
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +52,13 @@ services:
       - ../configs/gateway:/etc/leash:ro
     networks:
       - leash-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
+  # PostgreSQL - Stores configuration and usage data
   postgres:
     image: postgres:15-alpine
     environment:
@@ -54,7 +69,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ../scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "5433:5432"
+      - "5433:5432"  # Exposed on 5433 to avoid conflicts
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U leash"]
       interval: 10s
@@ -63,10 +78,11 @@ services:
     networks:
       - leash-network
 
+  # Redis - Caching and rate limiting
   redis:
     image: redis:7-alpine
     ports:
-      - "6380:6379"
+      - "6380:6379"  # Exposed on 6380 to avoid conflicts
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -78,10 +94,11 @@ services:
     networks:
       - leash-network
 
+  # Prometheus - Metrics collection
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9091:9090"
+      - "9091:9090"  # Exposed on 9091 to avoid conflicts
     volumes:
       - ../configs/prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
@@ -92,23 +109,20 @@ services:
     networks:
       - leash-network
 
+  # Grafana - Metrics visualization (optional)
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3002:3000"  # Exposed on 3002 to avoid conflicts with demo app
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=redis-datasource
     volumes:
       - grafana_data:/var/lib/grafana
     networks:
       - leash-network
-
-  # Note: The demo application is now a standalone Next.js app
-  # Run it separately with:
-  #   cd leash-demo-app
-  #   npm install
-  #   npm run dev
-  # It will connect to the gateway services defined above
+    profiles:
+      - monitoring  # Only start if --profile monitoring is specified
 
 volumes:
   postgres_data:
