@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   LineChart,
@@ -28,7 +29,8 @@ import {
   CheckCircle,
   TrendingUp,
   TrendingDown,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,11 +42,18 @@ export function MetricsDashboard({ className }: MetricsDashboardProps) {
   const [metrics, setMetrics] = useState<any>(null);
   const [health, setHealth] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  
+  // Baseline from when health checks were moved to direct connections
+  // This represents historical health check traffic that should be excluded
+  const HEALTH_CHECK_BASELINE = 168;
 
   useEffect(() => {
     fetchMetrics();
     fetchHealth();
     const interval = setInterval(() => {
+      console.log('[MetricsDashboard] Refreshing metrics...');
       fetchMetrics();
       fetchHealth();
     }, 5000); // Refresh every 5 seconds
@@ -55,10 +64,14 @@ export function MetricsDashboard({ className }: MetricsDashboardProps) {
     try {
       const response = await fetch('/api/metrics');
       const data = await response.json();
+      console.log('[MetricsDashboard] Received metrics:', data.data?.requests?.count);
       setMetrics(data.data);
+      setMetricsError(data.error || null);
       setLoading(false);
+      setLastUpdate(new Date());
     } catch (error) {
       console.error('Failed to fetch metrics:', error);
+      setMetricsError('Failed to connect to metrics API');
       setLoading(false);
     }
   };
@@ -76,16 +89,31 @@ export function MetricsDashboard({ className }: MetricsDashboardProps) {
   // Process metrics data for charts
   const getRequestData = () => {
     if (!metrics?.requests?.count) return [];
-    return metrics.requests.count.map((item: any) => ({
-      provider: item.metric.provider,
-      requests: parseFloat(item.value[1])
-    }));
+    const processed = metrics.requests.count.map((item: any) => {
+      const rawCount = parseFloat(item.value[1]);
+      // Subtract baseline health check traffic to show only real app requests
+      const realRequests = Math.max(0, rawCount - HEALTH_CHECK_BASELINE);
+      
+      const result = {
+        // Handle both formats: provider or envoy_cluster_name
+        provider: item.metric.provider || 
+                  item.metric.envoy_cluster_name?.replace('_cluster', '').replace('_api', ''),
+        requests: realRequests,
+        rawRequests: rawCount // Keep raw count for reference
+      };
+      
+      console.log(`[MetricsDashboard] ${result.provider}: Raw=${rawCount}, Real=${realRequests}`);
+      return result;
+    });
+    return processed;
   };
 
   const getLatencyData = () => {
     if (!metrics?.requests?.latency) return [];
     return metrics.requests.latency.map((item: any) => ({
-      provider: item.metric.provider,
+      // Handle both formats: provider or envoy_cluster_name
+      provider: item.metric.provider || 
+                item.metric.envoy_cluster_name?.replace('_cluster', '').replace('_api', ''),
       latency: parseFloat(item.value[1]) * 1000 // Convert to ms
     }));
   };
@@ -112,6 +140,60 @@ export function MetricsDashboard({ className }: MetricsDashboardProps) {
 
   return (
     <div className={cn("space-y-6", className)}>
+      {/* Status Messages */}
+      {metricsError && (
+        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <span className="text-sm text-red-800">
+            Metrics Error: {metricsError}
+          </span>
+        </div>
+      )}
+      
+      {!metricsError && metrics && getRequestData().length === 0 && (
+        <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <AlertCircle className="h-4 w-4 text-blue-600" />
+          <span className="text-sm text-blue-800">
+            No application traffic yet. Send requests through the gateway to see metrics.
+            (Health checks are excluded from metrics)
+          </span>
+        </div>
+      )}
+      
+      {!metricsError && metrics && getRequestData().some(d => d.requests > 0) && (
+        <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <span className="text-sm text-green-800">
+              Showing real application traffic only. Health check requests (168 baseline per provider) are excluded.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-3 w-3 text-green-600 animate-pulse" />
+            <span className="text-xs text-green-700">
+              Updates every 10s • Last: {lastUpdate.toLocaleTimeString()}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Manual Refresh Button */}
+      <div className="flex justify-end mb-4">
+        <Button
+          onClick={() => {
+            console.log('[MetricsDashboard] Manual refresh triggered');
+            fetchMetrics();
+            fetchHealth();
+          }}
+          size="sm"
+          variant="outline"
+          className="flex items-center gap-2"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh Now
+        </Button>
+      </div>
+
       {/* Health Status */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
@@ -151,7 +233,12 @@ export function MetricsDashboard({ className }: MetricsDashboardProps) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {getRequestData().reduce((sum, item) => sum + item.requests, 0).toFixed(0)}
+              {(() => {
+                const data = getRequestData();
+                const total = data.reduce((sum, item) => sum + item.requests, 0);
+                console.log('[MetricsDashboard] Total calculation:', data, '=', total);
+                return total.toFixed(0);
+              })()}
             </div>
             <p className="text-xs text-muted-foreground mt-1">
               Across all providers

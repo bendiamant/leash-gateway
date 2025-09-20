@@ -257,6 +257,22 @@ The gateway automatically routes based on URL patterns:
 
 ## 📊 Monitoring
 
+### Important: Metrics Baseline
+
+Health checks have been moved to direct provider connections (bypassing the gateway) to keep metrics clean. 
+
+**Current baseline (as of latest change):**
+- Historical health check requests: ~168 per provider
+- New requests shown = actual application traffic only
+
+To reset metrics completely:
+```bash
+# Restart Prometheus to clear all metrics
+docker-compose -f docker-compose.gateway.yaml restart prometheus
+```
+
+## 📊 Monitoring Details
+
 ### Prometheus Metrics
 
 Key metrics available at http://localhost:9091:

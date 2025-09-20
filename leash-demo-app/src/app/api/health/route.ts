@@ -53,8 +53,14 @@ async function checkProviderHealth(provider: string): Promise<HealthCheck> {
   const startTime = Date.now();
   
   try {
-    // Simple connectivity check through the gateway
-    const response = await fetch(`${GATEWAY_URL}/v1/${provider}/models`, {
+    // Direct health check to providers (bypass gateway to avoid polluting metrics)
+    const providerUrls: Record<string, string> = {
+      openai: 'https://api.openai.com/v1/models',
+      anthropic: 'https://api.anthropic.com/v1/models',
+      google: 'https://generativelanguage.googleapis.com/v1beta/models'
+    };
+    
+    const response = await fetch(providerUrls[provider] || `${GATEWAY_URL}/health`, {
       headers: {
         'Authorization': `Bearer ${process.env[`${provider.toUpperCase()}_API_KEY`] || 'test'}`
       },

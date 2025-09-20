@@ -27,6 +27,7 @@ interface ChatInterfaceV5Props {
 
 export function ChatInterfaceV5({ onMetricsUpdate }: ChatInterfaceV5Props) {
   const [provider, setProvider] = useState('openai');
+  const [useGateway, setUseGateway] = useState(true); // Default to gateway mode
   const [input, setInput] = useState(''); // Manage input state ourselves
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   
@@ -34,12 +35,13 @@ export function ChatInterfaceV5({ onMetricsUpdate }: ChatInterfaceV5Props) {
   const { messages, sendMessage, error, regenerate, status } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
-      // Prepare the request to include provider
+      // Prepare the request to include provider and gateway flag
       prepareSendMessagesRequest: ({ messages, trigger }) => {
         return {
           body: {
             messages,
-            provider // Include the current provider
+            provider, // Include the current provider
+            useGateway // Include gateway routing flag
           }
         };
       }
@@ -122,18 +124,35 @@ export function ChatInterfaceV5({ onMetricsUpdate }: ChatInterfaceV5Props) {
             <Bot className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">Leash Gateway Chat (AI SDK v5)</h2>
+            <h2 className="text-lg font-semibold">Leash Gateway Chat</h2>
             <p className="text-sm text-muted-foreground">
-              Powered by {providerInfo.name} ({providerInfo.model})
+              {providerInfo.name} ({providerInfo.model}) - {useGateway ? 'Via Gateway' : 'Direct'}
             </p>
           </div>
         </div>
         
-        <ProviderSelector 
-          value={provider} 
-          onValueChange={setProvider}
-          disabled={isLoading}
-        />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Mode:</span>
+            <Button
+              variant={useGateway ? "default" : "secondary"}
+              size="sm"
+              onClick={() => setUseGateway(!useGateway)}
+              className={cn(
+                "text-xs min-w-[100px]",
+                useGateway ? "bg-green-600 hover:bg-green-700" : "bg-gray-600 hover:bg-gray-700"
+              )}
+            >
+              {useGateway ? '🚦 Gateway' : '🔗 Direct'}
+            </Button>
+          </div>
+          
+          <ProviderSelector 
+            value={provider} 
+            onValueChange={setProvider}
+            disabled={isLoading}
+          />
+        </div>
       </div>
 
       {/* Messages */}
@@ -145,9 +164,18 @@ export function ChatInterfaceV5({ onMetricsUpdate }: ChatInterfaceV5Props) {
                 <Sparkles className="w-8 h-8 text-primary" />
               </div>
               <h3 className="text-lg font-semibold mb-2">Welcome to Leash Gateway Demo</h3>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-muted mb-3">
+                <div className={cn(
+                  "w-2 h-2 rounded-full animate-pulse",
+                  useGateway ? "bg-green-500" : "bg-blue-500"
+                )} />
+                <span className="text-xs font-medium">
+                  {useGateway ? '🚦 Routing through Gateway' : '🔗 Direct to Provider'}
+                </span>
+              </div>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Experience secure, governed LLM interactions through our gateway. 
-                Try switching providers to see seamless routing in action!
+                Experience secure, governed LLM interactions. 
+                {useGateway ? ' Requests are being routed through the gateway.' : ' Currently in direct mode (bypassing gateway).'}
               </p>
             </div>
           )}

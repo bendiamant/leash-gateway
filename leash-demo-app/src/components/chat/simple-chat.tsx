@@ -9,6 +9,8 @@ export function SimpleChat() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [useGateway, setUseGateway] = useState(true); // Default to gateway mode
+  const [provider] = useState('openai'); // Fixed to OpenAI for simplicity
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +27,8 @@ export function SimpleChat() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [...messages, userMessage],
-          provider: 'openai'
+          provider,
+          useGateway
         })
       });
 
@@ -84,6 +87,17 @@ export function SimpleChat() {
 
   return (
     <Card className="flex flex-col h-[600px]">
+      <div className="flex items-center justify-between p-3 border-b">
+        <span className="text-sm font-medium">Simple Chat - {useGateway ? 'Via Gateway' : 'Direct'}</span>
+        <Button
+          variant={useGateway ? "default" : "outline"}
+          size="sm"
+          onClick={() => setUseGateway(!useGateway)}
+          className="text-xs"
+        >
+          {useGateway ? '🚦 Gateway' : '🔗 Direct'}
+        </Button>
+      </div>
       <div className="flex-1 overflow-auto p-4">
         <div className="space-y-4">
           {messages.length === 0 && (

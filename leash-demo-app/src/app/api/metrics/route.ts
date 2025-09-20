@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-const PROMETHEUS_URL = process.env.GATEWAY_METRICS_URL || 'http://localhost:9090';
+const PROMETHEUS_URL = process.env.GATEWAY_METRICS_URL || 'http://localhost:9091';
 
 interface MetricQuery {
   metric: string;
@@ -10,14 +10,17 @@ interface MetricQuery {
   step?: string;
 }
 
-// Prometheus queries for gateway metrics
+// Prometheus queries for gateway metrics - using actual Envoy metrics
 const queries = {
-  requestCount: 'sum(rate(leash_gateway_requests_total[5m])) by (provider)',
-  latency: 'histogram_quantile(0.95, sum(rate(leash_gateway_request_duration_seconds_bucket[5m])) by (provider, le))',
-  errorRate: 'sum(rate(leash_gateway_requests_total{status=~"5.."}[5m])) by (provider)',
+  // Use Envoy's native metrics - these will now only show real app traffic
+  // since health checks go direct to providers
+  requestCount: 'sum(envoy_cluster_upstream_rq_total) by (envoy_cluster_name)',
+  latency: 'histogram_quantile(0.95, sum(rate(envoy_cluster_upstream_rq_time_bucket[5m])) by (envoy_cluster_name, le))',
+  errorRate: 'sum(rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="5"}[5m])) by (envoy_cluster_name)',
+  // These metrics aren't available yet
   costTotal: 'sum(leash_cost_usd_total) by (provider, model)',
-  activeModules: 'leash_module_active',
-  rateLimitHits: 'sum(rate(leash_ratelimit_hits_total[5m]))'
+  activeModules: 'up{job="leash-module-host"}',
+  rateLimitHits: 'sum(rate(envoy_cluster_upstream_rq_timeout[5m]))'
 };
 
 async function queryPrometheus(query: string, params?: Record<string, string>) {
@@ -67,45 +70,48 @@ export async function GET(req: Request) {
       ]);
 
       metrics.requests = {
-        count: requestCount,
-        latency,
-        errorRate
+        count: requestCount || [],
+        latency: latency || [],
+        errorRate: errorRate || []
       };
     }
 
     if (metricType === 'all' || metricType === 'cost') {
       const costData = await queryPrometheus(queries.costTotal);
-      metrics.cost = costData;
+      metrics.cost = costData || [];
     }
 
     if (metricType === 'all' || metricType === 'modules') {
       const moduleData = await queryPrometheus(queries.activeModules);
-      metrics.modules = moduleData;
+      metrics.modules = moduleData || [];
     }
 
     if (metricType === 'all' || metricType === 'ratelimit') {
       const rateLimitData = await queryPrometheus(queries.rateLimitHits);
-      metrics.rateLimit = rateLimitData;
+      metrics.rateLimit = rateLimitData || [];
     }
 
-    // Add mock data if Prometheus is not available
-    if (Object.keys(metrics).length === 0) {
-      metrics = getMockMetrics();
-    }
-
+    // Return real data (even if empty)
     return NextResponse.json({
       success: true,
       data: metrics,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      prometheusUrl: PROMETHEUS_URL
     });
   } catch (error) {
     console.error('Metrics API error:', error);
     
-    // Return mock data if Prometheus is unavailable
+    // Return error with empty metrics
     return NextResponse.json({
       success: false,
-      data: getMockMetrics(),
-      error: 'Prometheus unavailable, showing demo data',
+      data: {
+        requests: { count: [], latency: [], errorRate: [] },
+        cost: [],
+        modules: [],
+        rateLimit: []
+      },
+      error: error instanceof Error ? error.message : 'Failed to fetch metrics from Prometheus',
+      prometheusUrl: PROMETHEUS_URL,
       timestamp: new Date().toISOString()
     });
   }
