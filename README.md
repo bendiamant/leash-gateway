@@ -1,5 +1,8 @@
 # Leash Security Gateway
 
+![Leash Security Gateway Logo](./public/logo.png)
+
+
 An open-source LLM security gateway built with Envoy proxy and a pluggable module system. Provides centralized governance, observability, and policy enforcement for LLM traffic through configuration-based routing.
 
 ## 🎯 Key Features
